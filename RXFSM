@@ -1,0 +1,136 @@
+module uartrx(
+    txline,
+    baud,
+    resetc,
+    concat_data,
+    sipoe
+);
+
+input txline;
+input baud;
+input resetc;
+
+output reg sipoe;
+output reg [10:0] concat_data;
+
+reg [1:0] state, nextstate;
+reg [3:0] stop_count;
+
+parameter IDLE  = 2'b00;
+parameter START = 2'b01;
+parameter DATA  = 2'b10;
+parameter STOP  = 2'b11;
+
+
+//====================================================
+// STATE REGISTER
+//====================================================
+
+always @(posedge baud)
+begin
+    if(resetc)
+        state <= IDLE;
+    else
+        state <= nextstate;
+end
+
+
+//====================================================
+// DATA COUNTER
+//====================================================
+
+always @(posedge baud)
+begin
+    if(resetc)
+        stop_count <= 4'b0000;
+
+    else if(state == DATA)
+        stop_count <= stop_count + 1'b1;
+
+    else
+        stop_count <= 4'b0000;
+end
+
+
+//====================================================
+// SERIAL TO PARALLEL DATA COLLECTION
+//====================================================
+
+always @(posedge baud)
+begin
+    if(resetc)
+    begin
+        concat_data <= 11'b00000000000;
+    end
+
+    else
+    begin
+
+        if(state == START)
+            concat_data[0] <= txline;
+
+        if(state == DATA)
+            concat_data[stop_count + 1] <= txline;
+
+        if(state == STOP)
+            concat_data[10] <= txline;
+
+    end
+end
+
+
+//====================================================
+// NEXT STATE LOGIC
+//====================================================
+
+always @(*)
+begin
+
+    nextstate = state;
+    sipoe = 1'b0;
+
+    case(state)
+
+        IDLE:
+        begin
+            if(txline == 1'b0)
+                nextstate = START;
+            else
+                nextstate = IDLE;
+        end
+
+
+        START:
+        begin
+            if(txline == 1'b0)
+                nextstate = DATA;
+            else
+                nextstate = IDLE;
+        end
+
+
+        DATA:
+        begin
+            if(stop_count == 4'b1001)
+                nextstate = STOP;
+            else
+                nextstate = DATA;
+        end
+
+
+        STOP:
+        begin
+            sipoe = 1'b1;
+
+            if(txline == 1'b1)
+                nextstate = IDLE;
+            else
+                nextstate = STOP;
+        end
+
+    endcase
+
+end
+
+endmodule
+
