@@ -1,0 +1,292 @@
+`timescale 1ns / 1ps
+
+module test1(clk1,rate1,reset1,out1,done,paritygen1,txline1);
+
+input clk1;
+input rate1;
+input reset1;
+input txline1;
+
+output done;
+output reg paritygen1;
+output [2:0]out1;
+
+wire baud1;
+wire sipoe1;
+
+wire [10:0]concatdata1;
+wire [10:0]count1;
+
+
+uartrx U1(txline1,baud1,reset1,concatdata1,sipoe1);
+
+baudrategenerator B1(clk1,rate1,baud1,count1,reset1);
+
+ParityCheckRX P1(concatdata1,sipoe1,out1,paritygen1,done);
+
+endmodule
+
+
+
+
+module uartrx(
+    txline,
+    baud,
+    resetc,
+    concat_data,
+    sipoe
+);
+
+input txline;
+input baud;
+input resetc;
+
+output reg sipoe;
+output reg [10:0] concat_data;
+
+reg [1:0] state, nextstate;
+reg [3:0] stop_count;
+
+parameter IDLE  = 2'b00;
+parameter START = 2'b01;
+parameter DATA  = 2'b10;
+parameter STOP  = 2'b11;
+
+
+//====================================================
+// STATE REGISTER
+//====================================================
+
+always @(posedge baud)
+begin
+    if(resetc)
+        state <= IDLE;
+    else
+        state <= nextstate;
+end
+
+
+//====================================================
+// DATA COUNTER
+//====================================================
+
+always @(posedge baud)
+begin
+    if(resetc)
+        stop_count <= 4'b0000;
+
+    else if(state == DATA)
+        stop_count <= stop_count + 1'b1;
+
+    else
+        stop_count <= 4'b0000;
+end
+
+
+//====================================================
+// SERIAL TO PARALLEL DATA COLLECTION
+//====================================================
+
+always @(posedge baud)
+begin
+    if(resetc)
+    begin
+        concat_data <= 11'b00000000000;
+    end
+
+    else
+    begin
+
+        if(state == START)
+            concat_data[0] <= txline;
+
+        if(state == DATA)
+            concat_data[stop_count + 1] <= txline;
+
+        if(state == STOP)
+            concat_data[10] <= txline;
+
+    end
+end
+
+
+//====================================================
+// NEXT STATE LOGIC
+//====================================================
+
+always @(*)
+begin
+
+    nextstate = state;
+    sipoe = 1'b0;
+
+    case(state)
+
+        IDLE:
+        begin
+            if(txline == 1'b0)
+                nextstate = START;
+            else
+                nextstate = IDLE;
+        end
+
+
+        START:
+        begin
+            if(txline == 1'b0)
+                nextstate = DATA;
+            else
+                nextstate = IDLE;
+        end
+
+
+        DATA:
+        begin
+            if(stop_count == 4'b1001)
+                nextstate = STOP;
+            else
+                nextstate = DATA;
+        end
+
+
+        STOP:
+        begin
+            sipoe = 1'b1;
+
+            if(txline == 1'b1)
+                nextstate = IDLE;
+            else
+                nextstate = STOP;
+        end
+
+    endcase
+
+end
+
+endmodule
+
+
+
+
+module baudrategenerator(clk,rate,baud,count,reset);
+
+input clk;
+input rate;
+input reset;
+
+output reg baud;
+output reg [10:0]count;
+
+parameter B9600  = 1'b0;
+parameter B19200 = 1'b1;
+
+always @(posedge clk)
+begin
+    if(reset)
+    begin
+        count <= 11'b00000000000;
+        baud <= 1'b0;
+    end
+
+    else
+    begin
+
+        case(rate)
+
+        B9600:
+        begin
+            if(count == 52)
+            begin
+                count <= 0;
+                baud <= 1'b1;
+            end
+            else
+            begin
+                count <= count + 1;
+                baud <= 1'b0;
+            end
+        end
+
+        B19200:
+        begin
+            if(count == 26)
+            begin
+                count <= 0;
+                baud <= 1'b1;
+            end
+            else
+            begin
+                count <= count + 1;
+                baud <= 1'b0;
+            end
+        end
+
+        default:
+        begin
+            count <= 0;
+            baud <= 0;
+        end
+
+        endcase
+
+    end
+end
+
+endmodule
+
+
+
+
+module ParityCheckRX(
+    concatdata,
+    sipoe,
+    out,
+    paritygen,
+    not_done
+);
+
+input [10:0]concatdata;
+input sipoe;
+
+output reg paritygen;
+output reg [2:0]out;
+output reg not_done;
+
+
+always @(*)
+begin
+
+    if(sipoe)
+    begin
+        paritygen = ^concatdata[8:1];
+
+        not_done = 1'b0;
+
+        if(concatdata[10] == 1'b1)
+            out[0] = 1'b0;
+        else
+            out[0] = 1'b1;
+
+        if(concatdata[0] == 1'b0)
+            out[1] = 1'b0;
+        else
+            out[1] = 1'b1;
+
+        if(concatdata[9] == paritygen)
+            out[2] = 1'b0;
+        else
+            out[2] = 1'b1;
+
+    end
+
+    else
+    begin
+        paritygen = 1'b0;
+        not_done = 1'b1;
+        out = 3'b000;
+
+    end
+
+end
+
+endmodule
